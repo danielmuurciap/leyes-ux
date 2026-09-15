@@ -162,7 +162,7 @@ queda un icono que nadie entiende.
 ### Ley de Tesler (conservación de la complejidad)
 **Qué dice.** Todo proceso tiene una complejidad que no se puede eliminar, solo
 cambiar de sitio: la asume el sistema o la asume el usuario. — Larry Tesler,
-Xerox PARC, años ochenta.
+pionero de la interfaz gráfica en Xerox PARC y Apple.
 **En una interfaz.** Que la asuma el sistema: valores por defecto, autocompletar,
 detectar el formato, recordar lo último.
 **Cuidado.** Esconder la complejidad sin resolverla la traslada al usuario más

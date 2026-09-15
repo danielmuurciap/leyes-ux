@@ -1,6 +1,6 @@
 {
   "name": "leyes-ux",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Las 30 leyes de UX como skills para agentes de código.",
   "license": "MIT",
@@ -8,6 +8,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test tests/check-leyes.test.mjs"
+    "test": "node --test tests/check-leyes.test.mjs",
+    "evals": "claude plugin eval . --allow-tools Write Edit"
   }
 }

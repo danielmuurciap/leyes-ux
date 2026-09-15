@@ -35,7 +35,7 @@ Un botón que no escribe nada, no envía nada y no abre nada **no es un botón**
 | Confirmar algo destructivo | `AlertDialog` | un `Dialog` normal, o el `confirm()` del navegador |
 | Aviso del resultado de una acción | `Toast` | un banner fijo en la página |
 | Aviso persistente del estado del sistema | `Alert` en la página | `Toast`, que se va y no vuelve |
-| Lista de más de 7 elementos homogéneos | lista con agrupación y búsqueda | scroll infinito sin ancla |
+| Lista larga de elementos homogéneos | lista con agrupación, orden y búsqueda | scroll infinito sin ancla |
 | Dato que tarda en llegar | `Skeleton` con la forma del contenido | spinner centrado |
 | Paso a paso con final | `Stepper` con progreso visible | pantallas sueltas sin decir cuántas faltan |
 | Acción principal de la pantalla en móvil | barra fija inferior | botón al final de un scroll largo |

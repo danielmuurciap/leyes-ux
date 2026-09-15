@@ -1,0 +1,17 @@
+{
+  "description": "leyes-ux: corre el gate de leyes de UX sobre cada .jsx o .tsx que edita el agente y le devuelve las reglas duras que incumple",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/leyes-ux/scripts/check-leyes.mjs\" --hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

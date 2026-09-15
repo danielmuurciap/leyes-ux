@@ -17,7 +17,7 @@ sobra tiempo.
 
 | Momento | Movimiento | Duración |
 |---|---|---|
-| Entrada de una hoja o un diálogo | desde el borde, con resorte | spring, no milisegundos fijos |
+| Entrada de una hoja o un diálogo | desde el borde | la que trae la librería; si la animas tú, con resorte (spring) |
 | Cambio de pestaña | el indicador se desliza a la nueva | 0,2-0,3 s |
 | Elementos que aparecen en una lista | escalonados, 30-50 ms entre uno y otro | 0,2 s cada uno |
 | Espera de datos | skeleton con pulso | continuo |

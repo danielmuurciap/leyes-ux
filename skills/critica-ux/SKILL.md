@@ -13,9 +13,11 @@ leyes. Un hallazgo sin evidencia o sin arreglo concreto no se entrega.
 ## Qué necesitas
 
 - **Lo que se audita**: la ruta, la URL o la captura que indique la persona.
-- **La skill `leyes-ux`**, instalada junto a esta: `../leyes-ux/SKILL.md` y sus
-  `references/`. Si no está, dilo al principio y sigue con lo que sabes de las
-  leyes.
+- **La skill `leyes-ux`**, instalada junto a esta: es la carpeta hermana
+  `leyes-ux`, al lado de la carpeta de esta skill. De ahí salen su `SKILL.md`,
+  sus `references/` y `scripts/check-leyes.mjs`. **Resuelve su ruta absoluta
+  antes de usarla**: los comandos se ejecutan desde el proyecto, no desde la
+  skill. Si no está, dilo al principio y sigue con lo que sabes de las leyes.
 
 ## Pasos
 
@@ -31,13 +33,20 @@ leyes. Un hallazgo sin evidencia o sin arreglo concreto no se entrega.
      se han podido comprobar.
 3. **Parte la pantalla en superficies** (formulario, lista, navegación,
    filtros…) y aplica a cada una **solo su fila** de la tabla de enrutado de
-   `leyes-ux`. Para el componente correcto, `references/componentes.md`.
-4. **Corre el gate** si hay JSX o TSX:
-   `node ../leyes-ux/scripts/check-leyes.mjs --report <ruta>`.
-   Cada aviso es una pista, no un hallazgo: confírmalo en el código antes de
-   reportarlo, y descarta los contextuales que la clasificación del paso 1
-   justifica.
-5. **Ataca cada hallazgo antes de entregarlo.** ¿El fallo puede ocurrirle a
+   `leyes-ux`. Para el componente correcto, su `references/componentes.md`.
+4. **Repasa siempre las tres duras, a mano**, aunque luego corras el gate. Cada
+   una que encuentres es un hallazgo **Alta**:
+   - ¿Algún botón o enlace mide menos de 44 px de alto? Mira su propia clase o
+     estilo (`h-8` son 32 px, `size-9` son 36 px), no la de sus iconos.
+   - ¿Hay botones sueltos que cambian lo que se ve (una vista, una pestaña, un
+     periodo)? Eso es `Tabs` o un control segmentado.
+   - ¿Alguna acción espera a la red sin enseñar un estado de espera?
+5. **Corre el gate** si hay JSX o TSX y puedes ejecutar comandos:
+   `node <ruta absoluta de leyes-ux>/scripts/check-leyes.mjs --report <ruta>`.
+   Cada aviso trae `archivo:línea` y es una pista, no un hallazgo: confírmalo en
+   el código antes de reportarlo, y descarta los contextuales que la
+   clasificación del paso 1 justifica.
+6. **Ataca cada hallazgo antes de entregarlo.** ¿El fallo puede ocurrirle a
    *este* usuario *aquí*? Si no, fuera, o a «No aplica aquí».
 
 ## Formato de salida

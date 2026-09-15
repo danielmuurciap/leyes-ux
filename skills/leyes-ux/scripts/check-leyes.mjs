@@ -4,62 +4,60 @@
  * con clases utilitarias al estilo Tailwind. Dos capas:
  *
  * DURAS (fallan, exit 1): no dependen del producto. Un objetivo táctil de 32 px
- * es pequeño en cualquier pantalla; un await sin estado de espera deja al
- * usuario sin saber si pulsó.
+ * es pequeño en cualquier pantalla; un await tras un clic sin estado de espera
+ * deja al usuario sin saber si pulsó.
  *
  * CONTEXTUALES (informan, exit 0): dependen de a qué viene el usuario. Un panel
- * comparativo tiene varios primarios a propósito; una página de precios usa el
- * acento para comparar. Von Restorff dice «haz que lo importante destaque», no
- * «máximo uno». Se deciden con el contexto del producto delante.
+ * comparativo tiene varios primarios a propósito. Se deciden con el contexto
+ * del producto delante.
  *
- * Un gate que salta donde no toca se deja de leer. Por eso la capa contextual
- * no bloquea salvo con --estricto.
+ * Un gate que salta donde no toca se deja de leer. Por eso, ante la duda, las
+ * duras callan: un falso negativo cuesta menos que un falso positivo.
  *
- * Uso: node check-leyes.mjs [--report] [--estricto] <dir|fichero>...
- *   --report    lista todo sin fallar (exit 0)
- *   --estricto  las contextuales también fallan
- * Salida: 0 sin duras · 1 con duras (o contextuales con --estricto) · 2 mal uso
+ * Uso:
+ *   node check-leyes.mjs [--report] [--estricto] [--json] <dir|fichero>...
+ *   node check-leyes.mjs --hook   (hook PostToolUse: lee el JSON por stdin)
+ * Salida: 0 sin duras · 1 con duras (o contextuales con --estricto) ·
+ *         2 mal uso (flag desconocido, ruta que no existe, nada que analizar)
  *
- * Excepción: comentario `leyes:allow <id> <motivo>`, un id por comentario. Sin
- * motivo no cuenta: una excepción sin motivo es deuda invisible. Su alcance
- * depende de la regla:
- *  - reglas de ELEMENTO (objetivo-pequeno): vale para ese elemento, puesta en
- *    su misma línea o en la siguiente a su cierre. No tapa a los vecinos.
- *  - reglas de FICHERO (las demás): vale para el fichero entero, porque la regla
- *    misma es del fichero (hay await sin estado, hay N primarios).
+ * Excepción: `leyes:allow <id> <motivo>` en un comentario, todo en la misma
+ * línea. Sin motivo no cuenta. Alcance:
+ *  - objetivo-pequeno (regla de elemento): ese elemento, con el comentario en la
+ *    línea donde empieza o en la siguiente a su cierre. No tapa a los vecinos.
+ *  - las demás (reglas de fichero): el fichero entero.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const USO = "uso: check-leyes.mjs [--report] [--estricto] <dir|fichero>...";
-const args = process.argv.slice(2);
-if (args.includes("--help") || args.includes("-h")) {
-  console.log(`${USO}
+const USO = "uso: check-leyes.mjs [--report] [--estricto] [--json] <dir|fichero>...  |  check-leyes.mjs --hook";
+const AYUDA = `${USO}
   --report    lista todo sin fallar (exit 0)
   --estricto  las contextuales también fallan
-Excepción: // leyes:allow <id> <motivo>`);
-  process.exit(0);
-}
-const REPORT = args.includes("--report");
-const ESTRICTO = args.includes("--estricto");
-const targets = args.filter((a) => !a.startsWith("--"));
-if (!targets.length) {
-  console.error(USO);
-  process.exit(2);
-}
+  --json      salida en JSON: [{ fichero, linea, regla, capa, ley, detalle }]
+  --hook      hook PostToolUse de Claude Code: lee el JSON por stdin, analiza el
+              fichero editado y avisa al agente de las reglas duras (exit 2)
+Excepción: // leyes:allow <id> <motivo>`;
+const FLAGS = new Set(["--report", "--estricto", "--json", "--hook", "--help", "-h"]);
 
 const EXT = /\.(tsx|jsx)$/;
 const PRUEBA = /\.(test|spec|stories)\.(tsx|jsx)$/;  // los tests hacen await sin UI: no son pantalla
 const SALTAR = new Set(["node_modules", "dist", "build", "coverage", ".next", "out", "storybook-static"]);
 
-/** `leyes:allow <id> <motivo>`: el motivo tiene que empezar por letra o dígito, así `*\/}` no cuenta como motivo. */
-const permite = (id) => new RegExp(`leyes:allow\\s+${id}\\s+[\\p{L}\\d]`, "u");
+/** `leyes:allow <id> <motivo>` en una sola línea: el salto de línea no cuenta como separador. */
+const permite = (id) => new RegExp(`leyes:allow[^\\S\\n]+${id}[^\\S\\n]+[\\p{L}\\d]`, "u");
+
+function lineaDe(src, i) {
+  let n = 1;
+  for (let k = 0; k < i; k++) if (src.charCodeAt(k) === 10) n++;
+  return n;
+}
+function statSafe(p) { try { return statSync(p); } catch { return null; } }
 
 /**
  * Los tokens de altura con nombre (`h-control`, `min-h-row`) esconden su valor:
  * un `--spacing-control: 2.5rem` son 40 px y salta Fitts sin que se vea en el JSX.
  * Se resuelven contra el CSS del propio repo, subiendo desde el fichero analizado.
- * Sin CSS encontrado el mapa queda vacío y solo se juzgan los números literales.
+ * Sin CSS encontrado el mapa queda vacío y solo se juzgan los valores literales.
  */
 const cacheTokens = new Map();
 function tokensDeAltura(desde) {
@@ -80,7 +78,6 @@ function tokensDeAltura(desde) {
   }
   return new Map();
 }
-function statSafe(p) { try { return statSync(p); } catch { return null; } }
 /** Los CSS de tokens viven en `styles/` o en la raíz del paquete. No se escanea el repo entero. */
 function buscarCss(dir) {
   const out = [];
@@ -93,7 +90,51 @@ function buscarCss(dir) {
   return out;
 }
 
-/** Reglas de FICHERO: miran el fichero entero, no una línea. */
+/**
+ * Índice del `>` que cierra la etiqueta que empieza en `i`. Salta comillas,
+ * llaves y flechas: `onClick={() => x}` o `className="[&>svg]:size-4"` no la cierran.
+ */
+function finEtiqueta(src, i) {
+  let prof = 0, comilla = null;
+  for (let j = i + 1; j < src.length; j++) {
+    const c = src[j];
+    if (comilla) { if (c === comilla && src[j - 1] !== "\\") comilla = null; continue; }
+    if (c === '"' || c === "'" || c === "`") comilla = c;
+    else if (c === "{") prof++;
+    else if (c === "}") prof--;
+    else if (c === ">" && prof <= 0 && src[j - 1] !== "=") return j;
+  }
+  return -1;
+}
+
+/** Elementos que son un objetivo que se pulsa: nativos y los componentes habituales de las librerías. */
+const esNativo = (nombre) => nombre === "button" || nombre === "a";
+const esComponente = (nombre) => /^(?:[A-Z]\w*\.)?(?:\w*Button|Link|NavLink)$/.test(nombre);
+
+const BREAKPOINT = /^(?:sm|md|lg|xl|2xl)$/;
+/** Clases de una etiqueta, separando la utilidad de sus variantes (`sm:`, `hover:`, `[&_svg]:`). */
+function clases(texto) {
+  return texto.split(/[\s"'`{}(),]+/).filter(Boolean).map((token) => {
+    let prof = 0, corte = -1;
+    for (let k = 0; k < token.length; k++) {
+      if (token[k] === "[") prof++;
+      else if (token[k] === "]") prof--;
+      else if (token[k] === ":" && prof === 0) corte = k;
+    }
+    return { token, util: token.slice(corte + 1), variantes: corte === -1 ? [] : token.slice(0, corte).split(":") };
+  });
+}
+
+/** Altura en px de `h-9`, `min-h-[40px]`, `size-control`…; undefined si no es una altura conocida. */
+function alturaPx(util, tokens) {
+  let m;
+  if ((m = util.match(/^(?:min-h|h|size)-(\d+(?:\.\d+)?)$/))) return parseFloat(m[1]) * 4;
+  if ((m = util.match(/^(?:min-h|h|size)-\[([\d.]+)(px|rem)\]$/))) return m[2] === "rem" ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
+  if ((m = util.match(/^(?:min-h|h|size)-([a-z][\w-]*)$/))) return tokens.get(m[1]);
+  return undefined;
+}
+
+/** Cada check devuelve [{ i, detalle }], donde `i` es la posición en el fuente (para la línea). */
 const REGLAS = [
   {
     id: "primario-multiple",
@@ -101,8 +142,8 @@ const REGLAS = [
     ley: "Von Restorff · Atención selectiva",
     msg: "más de una acción primaria. Correcto en un panel comparativo o una página de precios; sospechoso en una pantalla de tarea. Decídelo con el contexto del producto",
     check(src) {
-      const n = (src.match(/variant=["'{]?\s*["']?(primary|default)["']?/g) || []).length;
-      return n > 1 ? [`${n} acciones primarias`] : [];
+      const ms = [...src.matchAll(/variant=["'{]?\s*["']?(primary|default)["']?/g)];
+      return ms.length > 1 ? [{ i: ms[1].index, detalle: `${ms.length} acciones primarias` }] : [];
     },
   },
   {
@@ -112,8 +153,8 @@ const REGLAS = [
     msg: "muchos usos del acento. Si la pantalla compara o clasifica puede ser correcto; si es una tarea, el acento dejó de señalar",
     check(src) {
       // `text-primary-foreground` es el texto SOBRE el acento, no otro uso del acento.
-      const n = (src.match(/(?<![\w-])(bg|text|border|ring|from|to)-(primary|brand|accent)(?![\w-])/g) || []).length;
-      return n > 4 ? [`${n} usos del acento`] : [];
+      const ms = [...src.matchAll(/(?<![\w-])(bg|text|border|ring|from|to)-(primary|brand|accent)(?![\w-])/g)];
+      return ms.length > 4 ? [{ i: ms[4].index, detalle: `${ms.length} usos del acento` }] : [];
     },
   },
   {
@@ -125,69 +166,77 @@ const REGLAS = [
     check(src, fichero) {
       const out = [];
       const tokens = tokensDeAltura(fichero || ".");
-      // La altura del objetivo no siempre está en la etiqueta: en una fila de lista
-      // la marca un hijo. Se escanea el bloque entero del botón o enlace.
-      // `=>` dentro de la etiqueta (onClick={() => …}) no la cierra.
-      const abre = /<(button|a)\b(?:=>|[^>])*>/g;
+      const abre = /<([A-Za-z][\w.]*)(?=[\s>/])/g;
       let m;
       while ((m = abre.exec(src))) {
-        const cierre = src.indexOf(`</${m[1]}>`, m.index);
-        const finBloque = cierre === -1 ? src.length : cierre;
-        const bloque = src.slice(m.index, finBloque);
-        const resto = bloque.slice(m[0].length);
-        // La excepción es de ESTE elemento: en su línea o en la SIGUIENTE a su
-        // cierre (un comentario JSX va debajo). No en la anterior: entre dos
-        // botones adyacentes taparía a los dos.
+        const nombre = m[1];
+        if (!esNativo(nombre) && !esComponente(nombre)) continue;
+        const fin = finEtiqueta(src, m.index);
+        if (fin === -1) continue;
+        const etiqueta = src.slice(m.index, fin + 1);
+        const cierraSola = src[fin - 1] === "/";
+        // Un componente sin hijos (`<ExternalLink className="h-4" />`) suele ser un
+        // icono con nombre de enlace, no un objetivo: callar es más barato.
+        if (cierraSola && !esNativo(nombre)) continue;
+        const cierre = cierraSola ? -1 : src.indexOf(`</${nombre}>`, fin);
+        const finElemento = cierre === -1 ? fin + 1 : cierre;
+        // La excepción es de ESTE elemento: en la línea donde empieza o en la
+        // SIGUIENTE a su cierre. No en la anterior: taparía al vecino de arriba.
         const iniLinea = src.lastIndexOf("\n", m.index) + 1;
-        const finLinea = src.indexOf("\n", finBloque);
+        const finLinea = src.indexOf("\n", finElemento);
         const finSig = finLinea === -1 ? -1 : src.indexOf("\n", finLinea + 1);
-        const entorno = src.slice(iniLinea, finSig === -1 ? src.length : finSig);
-        if (permite("objetivo-pequeno").test(entorno)) continue;
-        // `size-*` solo cuenta en la etiqueta raíz: un `size-icon` dentro mide el
-        // GLIFO, no el objetivo, y reportarlo es el falso positivo que mata al gate.
-        const clases = [...m[0].matchAll(/\b(?:min-h|h|size)-([\w-]+)\b/g),
-                        ...resto.matchAll(/\b(?:min-h|h)-([\w-]+)\b/g)];
-        for (const c of clases) {
-          const v = c[1];
-          if (/^(?:[1-9]|10)$/.test(v)) { out.push(`<${m[1]}> con ${c[0]}`); continue; }
-          const px = tokens.get(v);
-          if (px !== undefined && px < 44) out.push(`<${m[1]}> con ${c[0]} = ${px} px (--spacing-${v})`);
-        }
-        // Valores arbitrarios: `h-[40px]`, `min-h-[2.5rem]`.
-        const arbitrarias = [...m[0].matchAll(/(?<![\w-])(?:min-h|h|size)-\[([\d.]+)(px|rem)\]/g),
-                             ...resto.matchAll(/(?<![\w-])(?:min-h|h)-\[([\d.]+)(px|rem)\]/g)];
-        for (const c of arbitrarias) {
-          const px = c[2] === "rem" ? parseFloat(c[1]) * 16 : parseFloat(c[1]);
-          if (px < 44) out.push(`<${m[1]}> con ${c[0]} = ${px} px`);
+        if (permite("objetivo-pequeno").test(src.slice(iniLinea, finSig === -1 ? src.length : finSig))) continue;
+        // Solo cuenta la etiqueta del objetivo, nunca sus hijos: el `h-4` de un
+        // icono mide el glifo. Tampoco las variantes de escritorio (`sm:h-9`) ni
+        // las que estilan a otro elemento (`[&_svg]:size-4`).
+        const medidas = clases(etiqueta)
+          .filter((c) => !c.variantes.some((v) => BREAKPOINT.test(v) || v.includes("[")))
+          .map((c) => ({ c, px: alturaPx(c.util, tokens) }))
+          .filter((x) => x.px !== undefined && x.px > 0);
+        if (medidas.some((x) => x.c.util.startsWith("min-h-") && x.px >= 44)) continue;
+        for (const { c, px } of medidas) {
+          if (px >= 44) continue;
+          const valor = c.util.split("-").pop();
+          const origen = c.util.includes("[") ? ` = ${px} px` : /^[a-z]/.test(valor) ? ` = ${px} px (--spacing-${c.util.replace(/^(?:min-h|h|size)-/, "")})` : "";
+          out.push({ i: m.index, detalle: `<${nombre}> con ${c.token}${origen}` });
         }
       }
-      return [...new Set(out)];
+      return out.filter((h, k) => out.findIndex((o) => o.i === h.i && o.detalle === h.detalle) === k);
     },
   },
   {
     id: "botones-en-vez-de-tabs",
     capa: "dura",
     ley: "Ley de Jakob · Modelo mental",
-    msg: "3 o más botones que cambian el mismo estado: eso es Tabs o ToggleGroup, no botones",
+    msg: "3 o más botones ponen el mismo estado en valores distintos: eso es Tabs o ToggleGroup, no botones",
     check(src) {
-      const setters = {};
-      const re = /onClick=\{\s*\(\s*\)\s*=>\s*(set[A-Z]\w*)\s*\(/g;
-      let m;
-      while ((m = re.exec(src))) setters[m[1]] = (setters[m[1]] || 0) + 1;
-      return Object.entries(setters)
-        .filter(([, n]) => n >= 3)
-        .map(([s, n]) => `${n} botones llaman a ${s}()`);
+      const setters = new Map();
+      for (const m of src.matchAll(/onClick=\{\s*\(\s*\)\s*=>\s*\{?\s*(set[A-Z]\w*)\s*\(([^()]*)\)/g)) {
+        const arg = m[2].trim();
+        // Solo valores de una lista ("a", 2, Vista.Lista). true/false es abrir y cerrar, no cambiar de vista.
+        if (!/^(?:"[^"]*"|'[^']*'|\d+|[A-Z]\w*\.\w+)$/.test(arg)) continue;
+        const s = setters.get(m[1]) ?? { valores: new Set(), i: m.index };
+        s.valores.add(arg);
+        setters.set(m[1], s);
+      }
+      return [...setters]
+        .filter(([, s]) => s.valores.size >= 3)
+        .map(([nombre, s]) => ({ i: s.i, detalle: `${s.valores.size} botones llaman a ${nombre}() con valores distintos` }));
     },
   },
   {
     id: "async-sin-estado",
     capa: "dura",
     ley: "Umbral de Doherty",
-    msg: "hay await pero ningún estado de espera; el usuario no sabe si pulsó",
+    msg: "hay un await detrás de una acción del usuario y ningún estado de espera; el usuario no sabe si pulsó",
     check(src) {
-      if (!/\bawait\s/.test(src)) return [];
-      if (/\b(isLoading|isPending|loading|pending|isSubmitting|Skeleton|Spinner|useTransition)\b/.test(src)) return [];
-      return ["await sin isLoading/isPending/Skeleton"];
+      const m = /\bawait\s/.exec(src);
+      if (!m) return [];
+      // Sin nada que el usuario dispare (un server component, un loader) no hay a quién dar feedback aquí.
+      if (!/\bon(?:Click|Submit|Press|Change)\s*=|\b(?:formAction|action)=\{/.test(src)) return [];
+      const limpio = src.replace(/\bloading=["'](?:lazy|eager)["']/g, "");
+      if (/\b(isLoading|isPending|loading|pending|isSubmitting|submitting|isFetching|isMutating|Skeleton|Spinner|Loader\w*|useTransition|useOptimistic|useFormStatus|useActionState|Suspense)\b/.test(limpio)) return [];
+      return [{ i: m.index, detalle: "await sin isLoading, isPending, useFormStatus ni Skeleton" }];
     },
   },
   {
@@ -196,18 +245,32 @@ const REGLAS = [
     ley: "Ley de Tesler · Fluir",
     msg: "lista sin rama de vacío. No aplica si los elementos son fijos y conocidos (por ejemplo, 3 pestañas)",
     check(src) {
-      if (!/\.map\(/.test(src)) return [];
+      const m = /\.map\(/.exec(src);
+      if (!m) return [];
       if (/\.length\s*===?\s*0|\.length\s*\?|!\w+\.length|EmptyState|Empty\b|vacio|vacío/i.test(src)) return [];
-      return [".map( sin rama para lista vacía"];
+      return [{ i: m.index, detalle: ".map( sin rama para lista vacía" }];
     },
   },
 ];
 
+function analizar(fichero) {
+  const src = readFileSync(fichero, "utf8");
+  const hallazgos = [];
+  for (const r of REGLAS) {
+    // Excepción de FICHERO: solo para reglas de fichero. Las de elemento filtran ellas mismas.
+    if (r.alcance !== "elemento" && permite(r.id).test(src)) continue;
+    for (const h of r.check(src, fichero)) {
+      hallazgos.push({ fichero, linea: lineaDe(src, h.i), regla: r.id, capa: r.capa, ley: r.ley, msg: r.msg, detalle: h.detalle });
+    }
+  }
+  return hallazgos;
+}
+
 function* walk(p) {
   // Un symlink roto o un directorio sin permiso NO puede tumbar el gate:
   // un gate que rompe el build por el motivo equivocado acaba desactivado.
-  let st;
-  try { st = statSync(p); } catch { return; }
+  const st = statSafe(p);
+  if (!st) return;
   if (st.isFile()) { if (EXT.test(p) && !PRUEBA.test(p)) yield p; return; }
   let entradas;
   try { entradas = readdirSync(p); } catch { return; }
@@ -217,31 +280,64 @@ function* walk(p) {
   }
 }
 
-let duras = 0, contextuales = 0;
-const ficheros = new Set();
-for (const t of targets) {
-  for (const file of walk(t)) {
-    const src = readFileSync(file, "utf8");
-    for (const r of REGLAS) {
-      // Excepción de FICHERO: solo para reglas de fichero. Las de elemento
-      // filtran ellas mismas, por proximidad.
-      if (r.alcance !== "elemento" && permite(r.id).test(src)) continue;
-      const hits = r.check(src, file);
-      if (!hits.length) continue;
-      const etq = r.capa === "dura" ? "DURA" : "contexto";
-      console.log(`\n[${etq}] ${r.id} — ${r.msg}\n  ley: ${r.ley}`);
-      for (const h of hits) console.log(`  ${relative(process.cwd(), file)}  ${h}`);
-      if (r.capa === "dura") duras += hits.length; else contextuales += hits.length;
-      ficheros.add(file);
-    }
-  }
+/**
+ * Hook PostToolUse: recibe por stdin el JSON de la herramienta que acaba de
+ * editar un fichero. Si el fichero tiene reglas duras, las escribe en stderr y
+ * sale con 2 para que el agente las vea. Ante cualquier error, silencio y 0:
+ * un hook roto no puede bloquear al agente.
+ */
+function modoHook() {
+  let fichero;
+  try { fichero = JSON.parse(readFileSync(0, "utf8") || "{}").tool_input?.file_path; } catch { process.exit(0); }
+  if (typeof fichero !== "string" || !EXT.test(fichero) || PRUEBA.test(fichero) || !statSafe(fichero)?.isFile()) process.exit(0);
+  let duras;
+  try { duras = analizar(fichero).filter((h) => h.capa === "dura"); } catch { process.exit(0); }
+  if (!duras.length) process.exit(0);
+  const lineas = duras.map((h) => `- línea ${h.linea} · ${h.regla} (${h.ley}): ${h.detalle}. ${h.msg}.`);
+  process.stderr.write(
+    `leyes-ux: ${duras.length} regla(s) dura(s) en ${fichero}\n${lineas.join("\n")}\n` +
+    "Corrígelas antes de seguir. Si es una excepción justificada, anótala en el código con leyes:allow <regla> <motivo>.\n",
+  );
+  process.exit(2);
 }
 
-if (!duras && !contextuales) { console.log("✓ leyes: sin infracciones"); process.exit(0); }
-console.log(`\n${duras} dura(s) y ${contextuales} contextual(es) en ${ficheros.size} fichero(s).`);
-if (contextuales && !ESTRICTO) {
-  console.log("Las contextuales NO fallan: se deciden con el contexto del producto.");
-  console.log("Si ya se decidió que aquí no aplican, anótalo con `// leyes:allow <id> <motivo>`.");
+const args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) { console.log(AYUDA); process.exit(0); }
+const raros = args.filter((a) => a.startsWith("-") && !FLAGS.has(a));
+if (raros.length) { console.error(`flag desconocido: ${raros.join(", ")}\n${USO}`); process.exit(2); }
+if (args.includes("--hook")) modoHook();
+
+const REPORT = args.includes("--report");
+const ESTRICTO = args.includes("--estricto");
+const JSON_OUT = args.includes("--json");
+const targets = args.filter((a) => !a.startsWith("-"));
+if (!targets.length) { console.error(USO); process.exit(2); }
+const noExisten = targets.filter((t) => !statSafe(t));
+if (noExisten.length) { console.error(`no existe: ${noExisten.join(", ")}`); process.exit(2); }
+const ficheros = targets.flatMap((t) => [...walk(t)]);
+if (!ficheros.length) { console.error(`no hay ficheros .jsx ni .tsx que analizar en: ${targets.join(", ")}`); process.exit(2); }
+
+const hallazgos = ficheros.flatMap(analizar);
+const duras = hallazgos.filter((h) => h.capa === "dura").length;
+const contextuales = hallazgos.length - duras;
+
+if (JSON_OUT) {
+  console.log(JSON.stringify(hallazgos.map(({ msg, ...h }) => ({ ...h, fichero: relative(process.cwd(), h.fichero) })), null, 2));
+} else if (!hallazgos.length) {
+  console.log(`✓ leyes: sin infracciones en ${ficheros.length} fichero(s)`);
+} else {
+  let clave = "";
+  for (const h of hallazgos) {
+    if (h.fichero + h.regla !== clave) {
+      clave = h.fichero + h.regla;
+      console.log(`\n[${h.capa === "dura" ? "DURA" : "contexto"}] ${h.regla} — ${h.msg}\n  ley: ${h.ley}`);
+    }
+    console.log(`  ${relative(process.cwd(), h.fichero)}:${h.linea}  ${h.detalle}`);
+  }
+  console.log(`\n${duras} dura(s) y ${contextuales} contextual(es) en ${new Set(hallazgos.map((h) => h.fichero)).size} fichero(s).`);
+  if (contextuales && !ESTRICTO) {
+    console.log("Las contextuales NO fallan: se deciden con el contexto del producto.");
+    console.log("Si ya se decidió que aquí no aplican, anótalo con `// leyes:allow <id> <motivo>`.");
+  }
 }
-if (REPORT) process.exit(0);
-process.exit(duras || (ESTRICTO && contextuales) ? 1 : 0);
+process.exit(REPORT ? 0 : duras || (ESTRICTO && contextuales) ? 1 : 0);

@@ -16,7 +16,11 @@ skills en formato `SKILL.md`.
 
 Dentro de `leyes-ux` va `check-leyes.mjs`, un gate para proyectos React
 (JSX/TSX) que falla cuando hay objetivos táctiles de menos de 44 px, `await` sin
-estado de carga o botones haciendo de pestañas.
+estado de espera o botones haciendo de pestañas.
+
+Al terminar una pantalla, `leyes-ux` obliga al agente a entregar un bloque con
+el tipo de pantalla, cada presupuesto («cumple» o «no aplica: motivo») y la
+salida del gate. Así se ve qué decidió y qué no comprobó.
 
 ## Instalar
 
@@ -37,13 +41,15 @@ instalarlas. Con `-g` quedan para tu usuario y no solo para el proyecto.
 ```
 
 Instaladas como plugin, llevan su prefijo: `/leyes-ux:leyes-ux` y
-`/leyes-ux:critica-ux`.
+`/leyes-ux:critica-ux`. El plugin trae además un **hook**: cada vez que el
+agente edita un `.jsx` o `.tsx`, corre el gate sobre ese fichero y le devuelve
+las reglas duras que incumple, sin esperar a que se acuerde de comprobarlo.
 
 ### A mano
 
 Copia las dos carpetas de `skills/` a la carpeta de skills de tu agente (en
 Claude Code, `~/.claude/skills/`). Tienen que quedar una junto a la otra:
-`critica-ux` usa los ficheros de `leyes-ux`.
+`critica-ux` usa los ficheros de `leyes-ux`. Así no hay hook.
 
 ## Uso
 
@@ -73,9 +79,10 @@ node ~/.claude/skills/leyes-ux/scripts/check-leyes.mjs src
 |---|---|
 | `0` | sin infracciones duras |
 | `1` | hay duras, o contextuales con `--estricto` |
-| `2` | uso incorrecto |
+| `2` | uso incorrecto: flag desconocido, ruta que no existe o ninguna `.jsx`/`.tsx` |
 
-Qué detecta cada regla y cómo se anota una excepción está en
+Cada aviso sale como `archivo:línea`, y `--json` devuelve la misma lista para
+otras herramientas. Qué detecta cada regla y cómo se anota una excepción está en
 [`skills/leyes-ux/SKILL.md`](skills/leyes-ux/SKILL.md#el-gate).
 
 ## Cómo piensa
@@ -83,17 +90,27 @@ Qué detecta cada regla y cómo se anota una excepción está en
 - **Una ley solo aplica si el fallo que previene puede pasarle a este usuario
   en esta pantalla.** Una página de precios tiene varios botones primarios a
   propósito. Por eso hay dos capas: las **duras** (Fitts, Doherty) fallan en
-  cualquier producto; las **contextuales** (Von Restorff, Hick, Miller) avisan y
-  se deciden con el contexto.
+  cualquier producto; las **contextuales** (Von Restorff, Hick) avisan y se
+  deciden con el contexto.
 - **Se decide antes de construir.** Una tabla por superficie dice qué leyes
   mandan en un formulario, una lista, un estado vacío, una espera o un error, y
   qué componente toca en cada caso.
+- **Ante la duda, el gate calla.** Un falso positivo en una regla dura hace que
+  se deje de usar; un falso negativo solo deja pasar un caso.
 
 ## Desarrollo
 
 ```bash
-npm test
+npm test        # el gate, sin coste
+npm run evals   # el agente con y sin el plugin; necesita Claude Code y gasta tokens
 ```
+
+Las evals están en `evals/`. Cada caso pide a Claude construir o auditar algo y
+comprueba el resultado: que un selector de día, semana y mes salga con pestañas
+y no con botones, que tres opciones de envío sean radios y no un `select`, que
+guardar enseñe un estado de espera, que los botones de icono midan 44 px, que
+una lista tenga rama de vacío y que la crítica encuentre los fallos plantados.
+`claude plugin eval` repite cada caso sin el plugin y enseña la diferencia.
 
 Node 18 o superior, sin dependencias.
 
