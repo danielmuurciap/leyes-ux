@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "leyes-ux",
+  "description": "Las 30 leyes de UX como skills para agentes de código.",
+  "owner": {
+    "name": "Daniel Murcia"
+  },
+  "plugins": [
+    {
+      "name": "leyes-ux",
+      "description": "Las 30 leyes de UX convertidas en decisiones de interfaz, una crítica de UX y un gate para React.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Daniel Murcia"
+      },
+      "source": "./",
+      "category": "design",
+      "homepage": "https://github.com/danielmuurciap/leyes-ux"
+    }
+  ]
+}

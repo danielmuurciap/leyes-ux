@@ -1,0 +1,12 @@
+{
+  "name": "leyes-ux",
+  "description": "Las 30 leyes de UX convertidas en decisiones de interfaz, una crítica de UX y un gate para React.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Daniel Murcia"
+  },
+  "homepage": "https://github.com/danielmuurciap/leyes-ux",
+  "repository": "https://github.com/danielmuurciap/leyes-ux",
+  "license": "MIT",
+  "keywords": ["ux", "leyes de ux", "laws of ux", "diseño", "interfaz", "accesibilidad"]
+}
